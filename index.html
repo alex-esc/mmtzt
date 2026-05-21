@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Left Channel WAV Converter</title>
+    
+    <!-- Load Single-Threaded FFmpeg.wasm -->
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+    <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+
+    <style>
+        :root { --primary: #0366d6; --bg: #f6f8fa; --text: #24292e; --border: #e1e4e8; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background-color: var(--bg); color: var(--text); padding: 2rem; max-width: 800px; margin: 0 auto; }
+        h1 { margin-top: 0; }
+        
+        #dropzone {
+            border: 3px dashed var(--border);
+            border-radius: 12px;
+            padding: 40px 20px;
+            text-align: center;
+            background: #fff;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 20px;
+        }
+        #dropzone.dragover { border-color: var(--primary); background: #e8f0fe; }
+        #dropzone p { margin: 0; font-size: 1.2rem; color: #586069; }
+        
+        #file-list { list-style: none; padding: 0; margin: 0; }
+        .file-item {
+            background: #fff; border: 1px solid var(--border); border-radius: 8px;
+            padding: 15px; margin-bottom: 10px; display: flex;
+            justify-content: space-between; align-items: center;
+        }
+        .file-name { font-weight: bold; }
+        .status { font-size: 0.9rem; padding: 4px 8px; border-radius: 4px; }
+        
+        /* Status Colors */
+        .status.queued { background: #e1e4e8; color: #586069; }
+        .status.processing { background: #fffbdd; color: #735c0f; }
+        .status.error { background: #ffeef0; color: #b31d28; }
+        .status.success { background: #dcffe4; color: #176f2c; }
+        
+        button.download-btn {
+            background: var(--primary); color: white; border: none;
+            padding: 6px 12px; border-radius: 6px; cursor: pointer; text-decoration: none;
+            font-size: 0.9rem; display: inline-block;
+        }
+        button.download-btn:hover { background: #005cc5; }
+
+        #loading-overlay {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(255,255,255,0.9); display: flex;
+            justify-content: center; align-items: center; flex-direction: column;
+            z-index: 1000; font-size: 1.5rem; font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="loading-overlay">Loading FFmpeg Engine...<br><span style="font-size:1rem; font-weight:normal; margin-top:10px;">Please wait a moment.</span></div>
+
+    <h1>Convert Stereo WAV to Mono (Left Channel)</h1>
+    <p>Drag and drop your stereo <b>.wav</b> files below. The tool will ignore mono files and extract only the left channel from stereo files.</p>
+
+    <!-- Hidden file input for click-to-select -->
+    <input type="file" id="file-input" multiple accept=".wav" style="display: none;">
+    
+    <div id="dropzone">
+        <p>📁 Drag & Drop WAV files here<br><span style="font-size: 0.9rem;">(or click to browse)</span></p>
+    </div>
+
+    <ul id="file-list"></ul>
+
+    <script>
+        const { FFmpeg } = window.__ffmpeg;
+        const { fetchFile } = window.__ffmpeg_util;
+        
+        const ffmpeg = new FFmpeg();
+        let ffmpegLoaded = false;
+        
+        const dropzone = document.getElementById('dropzone');
+        const fileInput = document.getElementById('file-input');
+        const fileList = document.getElementById('file-list');
+        
+        let processQueue = [];
+        let isProcessing = false;
+
+        // Initialize FFmpeg
+        async function loadFFmpeg() {
+            try {
+                // Using Single-Threaded Core URLs so it works on GitHub Pages without CORS setup
+                const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+                await ffmpeg.load({
+                    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+                    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+                });
+                ffmpegLoaded = true;
+                document.getElementById('loading-overlay').style.display = 'none';
+            } catch (error) {
+                console.error("Error loading FFmpeg:", error);
+                document.getElementById('loading-overlay').innerHTML = "Error loading FFmpeg. Check console.";
+            }
+        }
+
+        // Helper to bypass some CDN issues
+        async function toBlobURL(url, mimeType) {
+            const resp = await fetch(url);
+            const blob = await resp.blob();
+            return URL.createObjectURL(new Blob([blob], { type: mimeType }));
+        }
+
+        // Fast WAV Header Reader to check Channels instantly
+        async function getWavChannels(file) {
+            // Read first 8KB which is more than enough to find the fmt chunk
+            const arrayBuffer = await file.slice(0, 8192).arrayBuffer();
+            const view = new DataView(arrayBuffer);
+            
+            if (view.getUint32(0, false) !== 0x52494646) return null; // 'RIFF'
+            if (view.getUint32(8, false) !== 0x57415645) return null; // 'WAVE'
+            
+            let offset = 12;
+            while (offset + 8 < view.byteLength) {
+                const chunkId = view.getUint32(offset, false);
+                const chunkSize = view.getUint32(offset + 4, true);
+                if (chunkId === 0x666D7420) { // 'fmt ' chunk
+                    return view.getUint16(offset + 10, true); // Channel count is at offset 10 of fmt
+                }
+                offset += 8 + chunkSize;
+            }
+            return null; // Could not determine
+        }
+
+        // UI Handlers
+        dropzone.addEventListener('click', () => fileInput.click());
+        dropzone.addEventListener('dragover', (e) => { e.preventDefault(); dropzone.classList.add('dragover'); });
+        dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+        dropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropzone.classList.remove('dragover');
+            handleFiles(e.dataTransfer.files);
+        });
+        fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
+
+        function handleFiles(files) {
+            if (!ffmpegLoaded) return alert("Please wait for FFmpeg to finish loading.");
+            for (let file of files) {
+                if (!file.name.toLowerCase().endsWith('.wav')) {
+                    addFileToUI(file, 'Skipped - Not a WAV file', 'error');
+                    continue;
+                }
+                const uiElement = addFileToUI(file, 'Queued...', 'queued');
+                processQueue.push({ file, uiElement });
+            }
+            processNext();
+        }
+
+        function addFileToUI(file, statusText, statusClass) {
+            const li = document.createElement('li');
+            li.className = 'file-item';
+            li.innerHTML = `
+                <span class="file-name">${file.name}</span>
+                <div class="actions">
+                    <span class="status ${statusClass}">${statusText}</span>
+                </div>
+            `;
+            fileList.appendChild(li);
+            return li;
+        }
+
+        function updateUIStatus(li, statusText, statusClass) {
+            const statusSpan = li.querySelector('.status');
+            statusSpan.textContent = statusText;
+            statusSpan.className = `status ${statusClass}`;
+        }
+
+        // Processing Logic
+        async function processNext() {
+            if (isProcessing || processQueue.length === 0) return;
+            isProcessing = true;
+            
+            const item = processQueue.shift();
+            const { file, uiElement } = item;
+
+            try {
+                updateUIStatus(uiElement, 'Checking...', 'processing');
+
+                // 1. Check if Mono or Stereo
+                const channels = await getWavChannels(file);
+                if (channels === null) {
+                    updateUIStatus(uiElement, 'Error - Invalid WAV format', 'error');
+                    isProcessing = false;
+                    return processNext();
+                }
+                if (channels === 1) {
+                    updateUIStatus(uiElement, 'Skipped - Already Mono', 'error');
+                    isProcessing = false;
+                    return processNext();
+                }
+
+                updateUIStatus(uiElement, 'Processing Audio...', 'processing');
+
+                // 2. Write file to FFmpeg virtual file system
+                const inName = "input.wav";
+                const outName = "output.wav";
+                await ffmpeg.writeFile(inName, await fetchFile(file));
+
+                // 3. Run FFmpeg command 
+                // -af "pan=1c|c0=c0" means: Output 1 channel (1c). Map input channel 0 (left) to output channel 0.
+                await ffmpeg.exec(['-i', inName, '-af', 'pan=1c|c0=c0', outName]);
+
+                // 4. Read the resulting file back
+                const data = await ffmpeg.readFile(outName);
+
+                // 5. Create Download link
+                const newName = file.name.replace(/\.[^/.]+$/, "") + "_mono.wav";
+                const blob = new Blob([data.buffer], { type: 'audio/wav' });
+                const url = URL.createObjectURL(blob);
+
+                const actionsDiv = uiElement.querySelector('.actions');
+                actionsDiv.innerHTML = `
+                    <a href="${url}" download="${newName}" class="download-btn">⬇ Download</a>
+                `;
+
+                // 6. Cleanup Memory
+                await ffmpeg.deleteFile(inName);
+                await ffmpeg.deleteFile(outName);
+
+            } catch (err) {
+                console.error(err);
+                updateUIStatus(uiElement, 'Conversion Failed', 'error');
+            }
+
+            isProcessing = false;
+            processNext(); // Loop to next file in queue
+        }
+
+        // Start loading FFmpeg immediately
+        loadFFmpeg();
+
+    </script>
+</body>
+</html>

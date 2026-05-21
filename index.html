@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Stereo to Mono (Left Channel) Converter</title>
     
-    <!-- We switched to jsDelivr CDN as it handles CORS headers more reliably for static sites -->
-    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+    <!-- Load FFmpeg.wasm UMD scripts from unpkg -->
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+    <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
 
     <style>
         body {
@@ -76,7 +76,6 @@
 
     <script>
         const { FFmpeg } = window.FFmpegWASM;
-        // We now pull toBlobURL directly from the official utility library
         const { fetchFile, toBlobURL } = window.FFmpegUtil;
         
         let ffmpeg = null;
@@ -90,16 +89,15 @@
                 ffmpeg = new FFmpeg();
                 ffmpeg.on('log', ({ message }) => console.log(message));
                 
-                const coreURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
-                const ffmpegURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd';
+                const coreURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+                const ffmpegURL = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd';
                 
-                // THE FIX: We use toBlobURL on the classWorkerURL.
-                // This tricks the browser into thinking the Web Worker is hosted on your GitHub Pages,
-                // completely bypassing the "Cannot be accessed from origin" CORS error!
                 await ffmpeg.load({
-                    coreURL: await toBlobURL(`${coreURL}/ffmpeg-core.js`, 'text/javascript'),
-                    wasmURL: await toBlobURL(`${coreURL}/ffmpeg-core.wasm`, 'application/wasm'),
-                    classWorkerURL: await toBlobURL(`${ffmpegURL}/814.ffmpeg.js`, 'text/javascript'),
+                    // THE FIX: Direct string URLs bypass the "Blob inside a Blob" import crash
+                    coreURL: `${coreURL}/ffmpeg-core.js`,
+                    wasmURL: `${coreURL}/ffmpeg-core.wasm`,
+                    // We STILL convert the worker to a blob so GitHub Pages doesn't block it
+                    classWorkerURL: await toBlobURL(`${ffmpegURL}/814.ffmpeg.js`, 'text/javascript')
                 });
                 
                 // Enable UI once loaded

@@ -75,8 +75,9 @@
     <div id="status"></div>
 
     <script>
-        const { FFmpeg } = window.__ffmpeg;
-        const { fetchFile } = window.__ffmpeg_util;
+        // THIS WAS THE FIX: Updated to the correct v0.12 global variable names
+        const { FFmpeg } = window.FFmpegWASM;
+        const { fetchFile } = window.FFmpegUtil;
         
         let ffmpeg = null;
 
@@ -84,7 +85,7 @@
         const dropText = document.getElementById('drop-text');
         const statusEl = document.getElementById('status');
 
-        // Helper function required by FFmpeg.wasm for CDN loading
+        // Helper function to load files from CDN properly
         async function toBlobURL(url, mimeType) {
             const resp = await fetch(url);
             const blob = await resp.blob();
@@ -93,14 +94,14 @@
 
         // Initialize FFmpeg
         async function loadFFmpeg() {
-            ffmpeg = new FFmpeg();
-            
-            // Log progress to console
-            ffmpeg.on('log', ({ message }) => console.log(message));
-            
-            const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
-            
             try {
+                ffmpeg = new FFmpeg();
+                
+                // Optional: Log progress to the F12 console
+                ffmpeg.on('log', ({ message }) => console.log(message));
+                
+                const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+                
                 await ffmpeg.load({
                     coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
                     wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
@@ -111,8 +112,8 @@
                 dropText.innerText = "Drag & Drop WAV files here";
                 statusEl.innerText = "Ready!";
             } catch (err) {
-                dropText.innerText = "Error loading FFmpeg!";
-                console.error(err);
+                dropText.innerText = "Error loading FFmpeg. Press F12 for details.";
+                console.error("FFmpeg Load Error:", err);
             }
         }
 
@@ -120,7 +121,7 @@
         async function processFile(file) {
             const originalName = file.name;
             
-            // Construct the new filename (e.g. vocal.wav -> vocal_mono.wav)
+            // Construct the new filename
             const dotIndex = originalName.lastIndexOf('.');
             const name = dotIndex !== -1 ? originalName.substring(0, dotIndex) : originalName;
             const ext = dotIndex !== -1 ? originalName.substring(dotIndex) : '.wav';
@@ -129,22 +130,20 @@
             statusEl.innerText = `Processing: ${originalName}...`;
 
             try {
-                // 1. Write the user's file to FFmpeg's virtual file system
+                // 1. Write file to FFmpeg's virtual file system
                 await ffmpeg.writeFile(originalName, await fetchFile(file));
 
-                // 2. Run FFmpeg command: 
-                // -i (input)
-                // -af "pan=1c|c0=c0" (Audio Filter: Pan to 1 channel, output channel 0 takes input channel 0/Left)
+                // 2. Run the command to keep only the Left channel
                 await ffmpeg.exec([
                     '-i', originalName, 
                     '-af', 'pan=1c|c0=c0', 
                     outName
                 ]);
 
-                // 3. Read the result back from the virtual file system
+                // 3. Read the result back
                 const data = await ffmpeg.readFile(outName);
 
-                // 4. Trigger download for the user
+                // 4. Download it automatically
                 const blob = new Blob([data.buffer], { type: 'audio/wav' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -155,7 +154,7 @@
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
 
-                // 5. Clean up virtual file system to free up RAM
+                // 5. Clean up memory
                 await ffmpeg.deleteFile(originalName);
                 await ffmpeg.deleteFile(outName);
 
@@ -167,11 +166,10 @@
 
         // Handle File Drops
         async function handleFiles(files) {
-            dropZone.classList.add('disabled'); // Disable dropping while processing
+            dropZone.classList.add('disabled');
             
             for (let i = 0; i < files.length; i++) {
                 const file = files[i];
-                // Optional: ensure it's an audio file
                 if (!file.type.startsWith('audio/') && !file.name.toLowerCase().endsWith('.wav')) {
                     console.warn(`Skipping non-audio file: ${file.name}`);
                     continue;
@@ -203,7 +201,7 @@
             }
         });
 
-        // Start loading FFmpeg as soon as the page opens
+        // Start loading FFmpeg
         loadFFmpeg();
     </script>
 </body>

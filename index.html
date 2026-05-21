@@ -71,7 +71,6 @@
     <h1>Convert Stereo WAV to Mono (Left Channel)</h1>
     <p>Drag and drop your stereo <b>.wav</b> files below. The tool will ignore mono files and extract only the left channel from stereo files.</p>
 
-    <!-- Hidden file input for click-to-select -->
     <input type="file" id="file-input" multiple accept=".wav" style="display: none;">
     
     <div id="dropzone">
@@ -81,7 +80,6 @@
     <ul id="file-list"></ul>
 
     <script>
-        // Import libraries from the loaded CDN scripts
         const { FFmpeg } = window.FFmpegWASM;
         const { fetchFile, toBlobURL } = window.FFmpegUtil;
         
@@ -98,13 +96,13 @@
         // Initialize FFmpeg
         async function loadFFmpeg() {
             try {
-                // Using Single-Threaded Core URLs
-                const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+                const coreURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+                const ffmpegURL = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd';
                 
-                // We MUST use toBlobURL to bypass strict browser CORS/MIME type rules
                 await ffmpeg.load({
-                    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-                    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm')
+                    coreURL: await toBlobURL(`${coreURL}/ffmpeg-core.js`, 'text/javascript'),
+                    wasmURL: await toBlobURL(`${coreURL}/ffmpeg-core.wasm`, 'application/wasm'),
+                    classWorkerURL: await toBlobURL(`${ffmpegURL}/814.ffmpeg.js`, 'text/javascript')
                 });
 
                 ffmpegLoaded = true;
@@ -116,7 +114,7 @@
             }
         }
 
-        // Fast WAV Header Reader to check Channels instantly
+        // Fast WAV Header Reader
         async function getWavChannels(file) {
             const arrayBuffer = await file.slice(0, 8192).arrayBuffer();
             const view = new DataView(arrayBuffer);
@@ -190,7 +188,6 @@
             try {
                 updateUIStatus(uiElement, 'Checking...', 'processing');
 
-                // 1. Check if Mono or Stereo
                 const channels = await getWavChannels(file);
                 if (channels === null) {
                     updateUIStatus(uiElement, 'Error - Invalid WAV format', 'error');
@@ -205,18 +202,15 @@
 
                 updateUIStatus(uiElement, 'Processing Audio...', 'processing');
 
-                // 2. Write file to FFmpeg virtual file system
                 const inName = "input.wav";
                 const outName = "output.wav";
                 await ffmpeg.writeFile(inName, await fetchFile(file));
 
-                // 3. Run FFmpeg command 
+                // Process left channel
                 await ffmpeg.exec(['-i', inName, '-af', 'pan=1c|c0=c0', outName]);
 
-                // 4. Read the resulting file back
                 const data = await ffmpeg.readFile(outName);
 
-                // 5. Create Download link
                 const newName = file.name.replace(/\.[^/.]+$/, "") + "_mono.wav";
                 const blob = new Blob([data.buffer], { type: 'audio/wav' });
                 const url = URL.createObjectURL(blob);
@@ -226,7 +220,6 @@
                     <a href="${url}" download="${newName}" class="download-btn">⬇ Download</a>
                 `;
 
-                // 6. Cleanup Memory
                 await ffmpeg.deleteFile(inName);
                 await ffmpeg.deleteFile(outName);
 
@@ -239,7 +232,6 @@
             processNext(); 
         }
 
-        // Start loading FFmpeg immediately
         loadFFmpeg();
 
     </script>

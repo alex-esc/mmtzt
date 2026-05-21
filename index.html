@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Left Channel WAV Converter</title>
     
-    <!-- Load Single-Threaded FFmpeg.wasm -->
+    <!-- Load Single-Threaded FFmpeg.wasm and Utils -->
     <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
     <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
 
@@ -51,15 +51,22 @@
 
         #loading-overlay {
             position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(255,255,255,0.9); display: flex;
+            background: rgba(255,255,255,0.95); display: flex;
             justify-content: center; align-items: center; flex-direction: column;
-            z-index: 1000; font-size: 1.5rem; font-weight: bold;
+            z-index: 1000; font-size: 1.5rem; font-weight: bold; text-align: center; padding: 20px;
+        }
+        #error-msg {
+            color: #b31d28; font-size: 1rem; margin-top: 15px; font-weight: normal; max-width: 600px; word-wrap: break-word;
         }
     </style>
 </head>
 <body>
 
-    <div id="loading-overlay">Loading FFmpeg Engine...<br><span style="font-size:1rem; font-weight:normal; margin-top:10px;">Please wait a moment.</span></div>
+    <div id="loading-overlay">
+        <div>Loading FFmpeg Engine...</div>
+        <div style="font-size:1rem; font-weight:normal; margin-top:10px;">Please wait a moment.</div>
+        <div id="error-msg"></div>
+    </div>
 
     <h1>Convert Stereo WAV to Mono (Left Channel)</h1>
     <p>Drag and drop your stereo <b>.wav</b> files below. The tool will ignore mono files and extract only the left channel from stereo files.</p>
@@ -74,9 +81,9 @@
     <ul id="file-list"></ul>
 
     <script>
-        // CORRECTED v0.12 GLOBAL VARIABLE NAMES
+        // Import libraries from the loaded CDN scripts
         const { FFmpeg } = window.FFmpegWASM;
-        const { fetchFile } = window.FFmpegUtil;
+        const { fetchFile, toBlobURL } = window.FFmpegUtil;
         
         const ffmpeg = new FFmpeg();
         let ffmpegLoaded = false;
@@ -91,19 +98,21 @@
         // Initialize FFmpeg
         async function loadFFmpeg() {
             try {
+                // Using Single-Threaded Core URLs
                 const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
                 
-                // Load Single-threaded webassembly directly
+                // We MUST use toBlobURL to bypass strict browser CORS/MIME type rules
                 await ffmpeg.load({
-                    coreURL: `${baseURL}/ffmpeg-core.js`,
-                    wasmURL: `${baseURL}/ffmpeg-core.wasm`
+                    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+                    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm')
                 });
 
                 ffmpegLoaded = true;
                 document.getElementById('loading-overlay').style.display = 'none';
+                
             } catch (error) {
                 console.error("Error loading FFmpeg:", error);
-                document.getElementById('loading-overlay').innerHTML = "Error loading FFmpeg. Please check your internet connection and refresh.";
+                document.getElementById('error-msg').innerText = `Error Details: ${error.message || error}. Try refreshing the page.`;
             }
         }
 
@@ -201,7 +210,7 @@
                 const outName = "output.wav";
                 await ffmpeg.writeFile(inName, await fetchFile(file));
 
-                // 3. Run FFmpeg command
+                // 3. Run FFmpeg command 
                 await ffmpeg.exec(['-i', inName, '-af', 'pan=1c|c0=c0', outName]);
 
                 // 4. Read the resulting file back

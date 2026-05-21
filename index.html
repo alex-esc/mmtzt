@@ -5,9 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Stereo to Mono (Left Channel) Converter</title>
     
-    <!-- Load FFmpeg.wasm UMD scripts -->
-    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
-    <script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+    <!-- We switched to jsDelivr CDN as it handles CORS headers more reliably for static sites -->
+    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
 
     <style>
         body {
@@ -75,9 +75,9 @@
     <div id="status"></div>
 
     <script>
-        // THIS WAS THE FIX: Updated to the correct v0.12 global variable names
         const { FFmpeg } = window.FFmpegWASM;
-        const { fetchFile } = window.FFmpegUtil;
+        // We now pull toBlobURL directly from the official utility library
+        const { fetchFile, toBlobURL } = window.FFmpegUtil;
         
         let ffmpeg = null;
 
@@ -85,26 +85,21 @@
         const dropText = document.getElementById('drop-text');
         const statusEl = document.getElementById('status');
 
-        // Helper function to load files from CDN properly
-        async function toBlobURL(url, mimeType) {
-            const resp = await fetch(url);
-            const blob = await resp.blob();
-            return URL.createObjectURL(new Blob([blob], { type: mimeType }));
-        }
-
-        // Initialize FFmpeg
         async function loadFFmpeg() {
             try {
                 ffmpeg = new FFmpeg();
-                
-                // Optional: Log progress to the F12 console
                 ffmpeg.on('log', ({ message }) => console.log(message));
                 
-                const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+                const coreURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/umd';
+                const ffmpegURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd';
                 
+                // THE FIX: We use toBlobURL on the classWorkerURL.
+                // This tricks the browser into thinking the Web Worker is hosted on your GitHub Pages,
+                // completely bypassing the "Cannot be accessed from origin" CORS error!
                 await ffmpeg.load({
-                    coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-                    wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+                    coreURL: await toBlobURL(`${coreURL}/ffmpeg-core.js`, 'text/javascript'),
+                    wasmURL: await toBlobURL(`${coreURL}/ffmpeg-core.wasm`, 'application/wasm'),
+                    classWorkerURL: await toBlobURL(`${ffmpegURL}/814.ffmpeg.js`, 'text/javascript'),
                 });
                 
                 // Enable UI once loaded
@@ -121,7 +116,6 @@
         async function processFile(file) {
             const originalName = file.name;
             
-            // Construct the new filename
             const dotIndex = originalName.lastIndexOf('.');
             const name = dotIndex !== -1 ? originalName.substring(0, dotIndex) : originalName;
             const ext = dotIndex !== -1 ? originalName.substring(dotIndex) : '.wav';
@@ -130,20 +124,18 @@
             statusEl.innerText = `Processing: ${originalName}...`;
 
             try {
-                // 1. Write file to FFmpeg's virtual file system
                 await ffmpeg.writeFile(originalName, await fetchFile(file));
 
-                // 2. Run the command to keep only the Left channel
+                // Audio filter: Pan 1 channel, output channel 0 = input channel 0 (left)
                 await ffmpeg.exec([
                     '-i', originalName, 
                     '-af', 'pan=1c|c0=c0', 
                     outName
                 ]);
 
-                // 3. Read the result back
                 const data = await ffmpeg.readFile(outName);
 
-                // 4. Download it automatically
+                // Trigger download
                 const blob = new Blob([data.buffer], { type: 'audio/wav' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
@@ -154,7 +146,7 @@
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
 
-                // 5. Clean up memory
+                // Clean up memory
                 await ffmpeg.deleteFile(originalName);
                 await ffmpeg.deleteFile(outName);
 
@@ -201,7 +193,6 @@
             }
         });
 
-        // Start loading FFmpeg
         loadFFmpeg();
     </script>
 </body>
